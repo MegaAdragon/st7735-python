@@ -25,8 +25,7 @@ import numpy as np
 import spidev
 import RPi.GPIO as GPIO
 
-
-__version__ = '0.0.4'
+__version__ = '0.0.5'
 
 BG_SPI_CS_BACK = 0
 BG_SPI_CS_FRONT = 1
@@ -98,6 +97,34 @@ ST7735_MAGENTA = 0xF81F  # 0b 11111 000000 11111
 ST7735_YELLOW = 0xFFE0  # 0b 11111 111111 00000
 ST7735_WHITE = 0xFFFF  # 0b 11111 111111 11111
 
+Gcmd = [
+    {'cmd': ST7735_SWRESET, 'delay': 50},
+    {'cmd': ST7735_SLPOUT, 'delay': 100},
+    {'cmd': 0x26, 'data': [0x04]},
+    {'cmd': 0xb1, 'data': [0x0b, 0x14]},
+    {'cmd': 0xc0, 'data': [0x08, 0x00]},
+    {'cmd': 0xc1, 'data': [0x05]},
+    {'cmd': 0xc5, 'data': [0x41, 0x30]},
+    {'cmd': 0xc7, 'data': [0xc1]},
+    {'cmd': 0xec, 'data': [0x1b]},
+    {'cmd': 0x3a, 'data': [0x55], 'delay': 100},
+    {'cmd': 0x2a, 'data': [0x00, 0x00, 0x00, 0x7f]},
+    {'cmd': 0x2b, 'data': [0x00, 0x00, 0x00, 0x9f]},
+    {'cmd': 0x36, 'data': [0xc8]},
+    {'cmd': 0xb7, 'data': [0x00]},
+    {'cmd': 0xf2, 'data': [0x00]},
+    {'cmd': 0xe0, 'data': [0x28, 0x24, 0x22, 0x31,
+                           0x2b, 0x0e, 0x53, 0xa5,
+                           0x42, 0x16, 0x18, 0x12,
+                           0x1a, 0x14, 0x03], 'delay': 50},
+    {'cmd': 0xe1, 'data': [0x17, 0x1b, 0x1d, 0x0e,
+                           0x14, 0x11, 0x2c, 0xa5,
+                           0x3d, 0x09, 0x27, 0x2d,
+                           0x25, 0x2b, 0x3c, ], 'delay': 50},
+    {'cmd': ST7735_NORON, 'delay': 10},
+    {'cmd': ST7735_DISPON, 'delay': 500},
+]
+
 
 def color565(r, g, b):
     """Convert red, green, blue components to a 16-bit 565 RGB value. Components
@@ -111,7 +138,7 @@ def image_to_data(image, rotation=0):
     # NumPy is much faster at doing this. NumPy code provided by:
     # Keith (https://www.blogger.com/profile/02555547344016007163)
     pb = np.rot90(np.array(image.convert('RGB')), rotation // 90).astype('uint16')
-    color = ((pb[:, :, 0] & 0xF8) << 8) | ((pb[:, :, 1] & 0xFC) << 3) | (pb[:, :, 2] >> 3)
+    color = ((pb[:, :, 0] & 0xF8) >> 3) | ((pb[:, :, 1] & 0xFC) << 3) | (pb[:, :, 2] << 8)
     return np.dstack(((color >> 8) & 0xFF, color & 0xFF)).flatten().tolist()
 
 
@@ -211,6 +238,14 @@ class ST7735(object):
     def height(self):
         return self._height if self._rotation == 0 or self._rotation == 180 else self._width
 
+    @property
+    def size(self):
+        return self._width, self._height
+
+    @property
+    def mode(self):
+        return 'RGB'
+
     def command(self, data):
         """Write a byte or array of bytes to the display as command data."""
         self.send(data, False)
@@ -231,118 +266,13 @@ class ST7735(object):
 
     def _init(self):
         # Initialize the display.
-
-        self.command(ST7735_SWRESET)    # Software reset
-        time.sleep(0.150)               # delay 150 ms
-
-        self.command(ST7735_SLPOUT)     # Out of sleep mode
-        time.sleep(0.500)               # delay 500 ms
-
-        self.command(ST7735_FRMCTR1)    # Frame rate ctrl - normal mode
-        self.data(0x01)                 # Rate = fosc/(1x2+40) * (LINE+2C+2D)
-        self.data(0x2C)
-        self.data(0x2D)
-
-        self.command(ST7735_FRMCTR2)    # Frame rate ctrl - idle mode
-        self.data(0x01)                 # Rate = fosc/(1x2+40) * (LINE+2C+2D)
-        self.data(0x2C)
-        self.data(0x2D)
-
-        self.command(ST7735_FRMCTR3)    # Frame rate ctrl - partial mode
-        self.data(0x01)                 # Dot inversion mode
-        self.data(0x2C)
-        self.data(0x2D)
-        self.data(0x01)                 # Line inversion mode
-        self.data(0x2C)
-        self.data(0x2D)
-
-        self.command(ST7735_INVCTR)     # Display inversion ctrl
-        self.data(0x07)                 # No inversion
-
-        self.command(ST7735_PWCTR1)     # Power control
-        self.data(0xA2)
-        self.data(0x02)                 # -4.6V
-        self.data(0x84)                 # auto mode
-
-        self.command(ST7735_PWCTR2)     # Power control
-        self.data(0x0A)                 # Opamp current small
-        self.data(0x00)                 # Boost frequency
-
-        self.command(ST7735_PWCTR4)     # Power control
-        self.data(0x8A)                 # BCLK/2, Opamp current small & Medium low
-        self.data(0x2A)
-
-        self.command(ST7735_PWCTR5)     # Power control
-        self.data(0x8A)
-        self.data(0xEE)
-
-        self.command(ST7735_VMCTR1)     # Power control
-        self.data(0x0E)
-
-        if self._invert:
-            self.command(ST7735_INVON)   # Invert display
-        else:
-            self.command(ST7735_INVOFF)  # Don't invert display
-
-        self.command(ST7735_MADCTL)     # Memory access control (directions)
-        self.data(0xC8)                 # row addr/col addr, bottom to top refresh
-
-        self.command(ST7735_COLMOD)     # set color mode
-        self.data(0x05)                 # 16-bit color
-
-        self.command(ST7735_CASET)      # Column addr set
-        self.data(0x00)                 # XSTART = 0
-        self.data(self._offset_left)
-        self.data(0x00)                 # XEND = ROWS - height
-        self.data(self._width + self._offset_left - 1)
-
-        self.command(ST7735_RASET)      # Row addr set
-        self.data(0x00)                 # XSTART = 0
-        self.data(self._offset_top)
-        self.data(0x00)                 # XEND = COLS - width
-        self.data(self._height + self._offset_top - 1)
-
-        self.command(ST7735_GMCTRP1)    # Set Gamma
-        self.data(0x02)
-        self.data(0x1c)
-        self.data(0x07)
-        self.data(0x12)
-        self.data(0x37)
-        self.data(0x32)
-        self.data(0x29)
-        self.data(0x2d)
-        self.data(0x29)
-        self.data(0x25)
-        self.data(0x2B)
-        self.data(0x39)
-        self.data(0x00)
-        self.data(0x01)
-        self.data(0x03)
-        self.data(0x10)
-
-        self.command(ST7735_GMCTRN1)    # Set Gamma
-        self.data(0x03)
-        self.data(0x1d)
-        self.data(0x07)
-        self.data(0x06)
-        self.data(0x2E)
-        self.data(0x2C)
-        self.data(0x29)
-        self.data(0x2D)
-        self.data(0x2E)
-        self.data(0x2E)
-        self.data(0x37)
-        self.data(0x3F)
-        self.data(0x00)
-        self.data(0x00)
-        self.data(0x02)
-        self.data(0x10)
-
-        self.command(ST7735_NORON)      # Normal display on
-        time.sleep(0.10)                # 10 ms
-
-        self.command(ST7735_DISPON)     # Display on
-        time.sleep(0.100)               # 100 ms
+        for cmd in Gcmd:
+            self.command(cmd['cmd'])
+            if 'data' in cmd:
+                for data in cmd['data']:
+                    self.data(data)
+            if 'delay' in cmd:
+                time.sleep(cmd['delay'] / 1000)
 
     def begin(self):
         """Set up the display
@@ -365,23 +295,26 @@ class ST7735(object):
         if y1 is None:
             y1 = self._height - 1
 
-        y0 += self._offset_top
-        y1 += self._offset_top
+        colstart = 0
+        rowstart = 0
 
-        x0 += self._offset_left
-        x1 += self._offset_left
+        # y0 += self._offset_top
+        # y1 += self._offset_top
+        #
+        # x0 += self._offset_left
+        # x1 += self._offset_left
 
-        self.command(ST7735_CASET)       # Column addr set
-        self.data(x0 >> 8)
-        self.data(x0)                    # XSTART
-        self.data(x1 >> 8)
-        self.data(x1)                    # XEND
-        self.command(ST7735_RASET)       # Row addr set
-        self.data(y0 >> 8)
-        self.data(y0)                    # YSTART
-        self.data(y1 >> 8)
-        self.data(y1)                    # YEND
-        self.command(ST7735_RAMWR)       # write to RAM
+        self.command(ST7735_CASET)  # Column addr set
+        self.data(0x00)
+        self.data(x0 + colstart)  # XSTART
+        self.data(0x00)
+        self.data(x1 + colstart)  # XEND
+        self.command(ST7735_RASET)  # Row addr set
+        self.data(0x00)
+        self.data(y0 + rowstart)  # YSTART
+        self.data(0x00)
+        self.data(y1 + rowstart)  # YEND
+        self.command(ST7735_RAMWR)  # write to RAM
 
     def display(self, image):
         """Write the provided image to the hardware.
@@ -398,3 +331,13 @@ class ST7735(object):
         pixelbytes = list(image_to_data(image, self._rotation))
         # Write data to hardware.
         self.data(pixelbytes)
+
+    def fill(self, x, y, w, h, color):
+        self.set_window(x, y, x + w - 1, y + h - 1)
+
+        buf = []
+        for i in range(0, h):
+            for j in range(0, w):
+                buf.append(color >> 8)
+                buf.append(color)
+        self.data(buf)
